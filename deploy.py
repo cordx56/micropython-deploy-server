@@ -14,6 +14,7 @@ os.chdir("..")
 host = sys.argv[1]
 with open("deploy.tar", "rb") as f:
     data = f.read()
+os.remove("deploy.tar")
 
 with socket.socket() as s:
     s.connect((host, 9000))
