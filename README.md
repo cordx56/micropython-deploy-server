@@ -1,4 +1,4 @@
-# MicroPython Script Load Server
+# MicroPython Script Server
 
 ## What's this?
 Deploying MicroPython code on the board requires connecting it to a PC, which is tedious and time consuming.
