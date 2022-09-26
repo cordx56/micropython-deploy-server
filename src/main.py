@@ -29,7 +29,7 @@ def wifi_connect():
 def start_deployed():
     """Start deployed script"""
     try:
-        with open("init.py", "r") as f:
+        with open(USER_INIT_FILE, "r") as f:
             exec(f.read())
     except Exception as e:
         print("Start deployed script failed: ", e)
