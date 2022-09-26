@@ -6,6 +6,8 @@ import network
 
 import secrets
 
+USER_INIT_FILE = "init.py"
+
 # functions
 def wifi_connect():
     """Connect to WiFi AP"""
@@ -26,17 +28,38 @@ def wifi_connect():
 def start_deployed():
     """Start deployed script"""
     try:
-        os.chdir("deploy")
-        with open("__init__.py", "r") as f:
+        with open("init.py", "r") as f:
             exec(f.read())
     except Exception as e:
         print("Start deployed script failed: ", e)
 
+
+def rm_recursive(path):
+    try:
+        os.rmdir(path)
+    except NotADirectoryError:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+    except:
+        for d in os.listdir(path):
+            rm_recursive(path + "/" + d)
+        os.rmdir(path)
+def mkdir_filename(filename: str):
+    if "/" not in filename:
+        return
+    path_list = filename.split("/")[:-1]
+    for i in range(1, len(path_list) + 1):
+        try:
+            os.mkdir("/".join(path_list[:i]))
+        except:
+            pass
 def untar(prefix: str, data):
     """Untar bytes"""
     def get_filename(remain_data) -> str:
         return remain_data[:100].decode().replace("\x00", "")
     def write_file(filename, remain_data) -> int:
+        print(data[124:135])
         size = int(data[124:135].decode(), 8)
         file_end = 512 + size
         with open(filename, "wb") as f:
@@ -50,15 +73,6 @@ def untar(prefix: str, data):
                 return False
         return True
 
-    def mkdir_filename(filename: str):
-        if "/" not in filename:
-            return
-        path_list = filename.split("/")[:-1]
-        for i in range(1, len(path_list) + 1):
-            try:
-                os.mkdir("/".join(path_list[:i]))
-            except:
-                pass
 
     next_block = 0
     while True:
@@ -69,35 +83,79 @@ def untar(prefix: str, data):
         if is_eoa(data[next_block:]):
             break
 
+
+def http_handler(data: bytes):
+    try:
+        next_index = data.index(b"\r\n")
+        first_line = data[:next_index]
+        first_line_splitted = first_line.split(b" ")
+        method = first_line_splitted[0]
+        path_and_query = first_line_splitted[1]
+        path = path_and_query.split(b"?")[0]
+        remain_data = data[next_index + 2:]
+        while True:
+            next_index = remain_data.index(b"\r\n")
+            line = remain_data[:next_index]
+            remain_data = remain_data[next_index + 2:]
+            if len(line) == 0:
+                break
+            elif len(remain_data) == 0:
+                break
+        relative_path = path.decode()[1:]
+        if method == b"PUT":
+            mkdir_filename(relative_path)
+            with open(relative_path, "wb") as f:
+                f.write(remain_data)
+            return b"HTTP/1.1 201 Created", b"Created"
+        elif method == b"DELETE":
+            try:
+                rm_recursive(relative_path)
+                return b"HTTP/1.1 200 OK", b"OK"
+            except:
+                return b"HTTP/1.1 404 Not Found", b"Not Found"
+        elif method == b"GET":
+            if path == b"/reset":
+                machine.reset()
+                return b"HTTP/1.1 200 OK", b"OK"
+            else:
+                return b"HTTP/1.1 404 Not Found", b"Not Found"
+        elif method == b"POST":
+            if path == b"/tar":
+                untar("", remain_data)
+                return b"HTTP/1.1 201 Created", b"Created"
+            else:
+                return b"HTTP/1.1 404 Not Found", b"Not Found"
+        else:
+            return b"HTTP/1.1 400 Bad Request", b"Bad Request"
+    except Exception as e:
+        print(e)
+        return b"HTTP/1.1 500 Internal Server Error", b"Internal Server Error"
+
+
 def start_server():
     """Start TCP server"""
     s = socket.socket()
     s.bind(("0.0.0.0", 9000))
     s.listen()
 
-    cl, claddr = s.accept()
-    print("Connect: ", claddr)
-
-    data = b""
     while True:
-        recv = cl.recv(1024)
-        if not recv:
-            break
-        data += recv
+        cl, claddr = s.accept()
+        print("Connect: ", claddr)
 
-    try:
-        os.chdir("..")
-        os.rmdir("deploy")
-        os.mkdir("deploy")
-    except:
-        pass
-    untar("deploy/", data)
-    print("deployed to", os.getcwd() + "/deploy")
-
-    cl.send(b"OK")
-    cl.close()
-
-    machine.reset()
+        data = b""
+        while True:
+            try:
+                recv = cl.recv(1024)
+                data += recv
+                if not recv or len(recv) < 1024:
+                    break
+            except ConnectionResetError:
+                break
+        response, body = http_handler(data)
+        cl.send(response)
+        cl.send(b"\r\n\r\n")
+        cl.send(body)
+        cl.close()
 
 def server_loop():
     while True:
