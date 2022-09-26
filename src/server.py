@@ -1,30 +1,34 @@
 import os
 import socket
-import _thread
-from thread import new_thread
+import machine
 
 from untar import untar
 
-s = socket.socket()
-s.bind(("0.0.0.0", 9000))
-s.listen(1)
+def start_server():
+    s = socket.socket()
+    s.bind(("0.0.0.0", 9000))
+    s.listen()
 
-_thread.start_new_thread(new_thread, ())
-
-while True:
     cl, claddr = s.accept()
-    cl_file = cl.makefile("rb", 0)
+    print("Connect: ", claddr)
+
+    data = b""
+    while True:
+        recv = cl.recv(1024)
+        if not recv:
+            break
+        data += recv
 
     try:
+        os.chdir("..")
+        os.rmdir("deploy")
         os.mkdir("deploy")
     except:
         pass
-
-    data = cl_file.read()
     untar("deploy/", data)
+    print("deployed to", os.getcwd() + "/deploy")
 
     cl.send(b"OK")
-
     cl.close()
 
-    _thread.exit()
+    machine.reset()

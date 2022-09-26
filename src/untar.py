@@ -1,10 +1,10 @@
 import os
 
-def untar(prefix, data):
+def untar(prefix: str, data):
     def get_filename(remain_data) -> str:
         return remain_data[:100].decode().replace("\x00", "")
     def write_file(filename, remain_data) -> int:
-        size = int(data[124:136].decode())
+        size = int(data[124:135].decode(), 8)
         file_end = 512 + size
         with open(filename, "wb") as f:
             f.write(remain_data[512:file_end])
@@ -20,11 +20,12 @@ def untar(prefix, data):
     def mkdir_filename(filename: str):
         if "/" not in filename:
             return
-        d = "/".join(filename.split("/")[:-1])
-        try:
-            os.mkdir(d)
-        except:
-            pass
+        path_list = filename.split("/")[:-1]
+        for i in range(1, len(path_list) + 1):
+            try:
+                os.mkdir("/".join(path_list[:i]))
+            except:
+                pass
 
     next_block = 0
     while True:
