@@ -5,43 +5,79 @@ Deploying MicroPython code on the board requires connecting it to a PC, which is
 
 This project aim to deploy MicroPython code faster via network.
 
+## Requirements
+These need to be installed on your PC:
+- curl
+- ampy
+  - `pip install adafruit-ampy`
+
 ## How to use this?
 ### Setup the board
-#### With microSD card
-##### Copy src contents to the microSD card
-Copy all files under the src directory to your microSD card.
+#### Install MicroPython
+Install MicroPython to your board.
 
-##### Connect microSD card to board
-First, you have to connect a microSD card to your board.
+The guide can be found [here](https://docs.micropython.org/en/latest/index.html).
+日本語版ガイドは[こちら](https://micropython-docs-ja.readthedocs.io/ja/latest/index.html)。
+#### Edit secrets.py
+Edit `src/secrets.py` to enable WiFi connection.
 
-You can use this script without a microSD card.
-But I recommend to use a microSD card.
+Example:
+```python
+WIFI_SSID = "your WiFi SSID"
+WIFI_PASSWORD = "your WiFi password"
 
-To connect microSD card to your board, [check this document](https://docs.micropython.org/en/latest/library/machine.SDCard.html).
-[日本語版ドキュメント](https://micropython-docs-ja.readthedocs.io/ja/latest/library/machine.SDCard.html)
+WIFI_IFCONFIG = None
+# You can specify static IPv4 address
+# (If you not specify static IPv4 address, IPv4 address is determined using DHCP)
+# WIFI_IFCONFIG = ("192.168.1.1", "255.255.255.0", "192.168.1.1", "8.8.8.8")
+```
+#### Put main.py and secrets.py to your board
+Run `./put.sh [serial]`.
 
-##### Put main.py to your board
-Run `./put_main.sh [serial_port]`.
-
-If you use macOS, `serial_port` will look like `/dev/tty.usbserial-0001`.
-
-Then, Power on your board!
-
-#### Without microSD card
-Without microSD card is quite a simple.
-But when you update this server code, you have to connect your board to PC.
-
-##### Put all scripts to your board
-Run `./put_all.sh [serial_port]`.
+If you use macOS, `serial` will look like `/dev/tty.usbserial-0001`.
 
 Then, Power on your board!
 
-### Deploy your code
-You can deploy MicroPython codes in `deploy` directory.
+### How to deploy the program?
+Use `deploy_src.sh`.
+This script will automatically transfer files under src directory via network and reset your board.
 
-When your board is started, `__init__.py` is loaded first.
-So you have to create `deploy/__init__.py` first.
+When your board is reset, `main.py` opens `init.py` and run the contents.
+This means that the entry point for your program must be written in `src/init.py`.
 
-When you are ready to deploy, Run `./deploy.py [serial_port]`.
+## How to use API?
+The API is simple.
+Server listing TCP port 9000.
+You can send HTTP request to the server.
 
-Your board is automatically reset.
+### POST [path]
+You can deploy your script to specified path.
+
+Example:
+```bash
+$ curl -X POST -H "Content-Type: application/octet-stream" --data-binary @src/init.py "http://192.168.1.102:9000/init.py"
+```
+
+### DELETE [path]
+Delete specified file.
+
+Example:
+```bash
+$ curl -X DELETE http://192.168.1.102:9000/init.py"
+```
+
+### POST /reset
+Reset your board.
+
+Example:
+```bash
+$ curl -X POST http://192.168.1.102:9000/reset"
+```
+
+### POST /tar
+Deploy tar file.
+
+Example:
+```bash
+$ curl -X POST -H "Content-Type: application/octet-stream" --data-binary @deploy.tar "http://192.168.1.102:9000/tar"
+```

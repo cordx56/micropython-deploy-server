@@ -119,16 +119,13 @@ def http_handler(data: bytes):
                 return b"HTTP/1.1 200 OK", b"OK", empty_callback
             except:
                 return b"HTTP/1.1 404 Not Found", b"Not Found", empty_callback
-        elif method == b"GET":
+        elif method == b"POST":
             if path == b"/reset":
                 def reset_callback():
                     time.sleep(1)
                     machine.reset()
                 return b"HTTP/1.1 200 OK", b"OK", reset_callback
-            else:
-                return b"HTTP/1.1 404 Not Found", b"Not Found", empty_callback
-        elif method == b"POST":
-            if path == b"/tar":
+            elif path == b"/tar":
                 untar("", remain_data)
                 return b"HTTP/1.1 201 Created", b"Created", empty_callback
             else:
