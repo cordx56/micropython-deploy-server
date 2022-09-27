@@ -38,7 +38,7 @@ def start_deployed():
     except Exception as e:
         print("Start deployed script failed: ", e)
 
-def rm_recursive(path):
+def rm_recursive(path: str):
     try:
         os.rmdir(path)
     except NotADirectoryError:
@@ -65,7 +65,7 @@ def mkdir_filename(filename: str):
             os.mkdir("/".join(path_list[:i]))
         except:
             pass
-def untar(prefix: str, data):
+def untar(prefix: str, data: bytes):
     """Untar bytes"""
     def get_filename(remain_data) -> str:
         return remain_data[:100].decode().replace("\x00", "")
