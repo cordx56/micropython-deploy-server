@@ -85,7 +85,7 @@ $ curl -X POST -H "Content-Type: application/octet-stream" --data-binary @deploy
 ```
 
 ### POST /cleanup
-Delete all files expect `boot.py`, `main.py`, `secrets.py`.
+Delete all files except `boot.py`, `main.py`, `secrets.py`.
 
 Example:
 ```bash
