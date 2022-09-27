@@ -1,4 +1,4 @@
-# MicroPython Script Server
+# MicroPython Deploy Server
 
 ## What's this?
 Deploying MicroPython code on the board requires connecting it to a PC, which is tedious and time consuming.
@@ -50,12 +50,12 @@ The API is simple.
 Server listing TCP port 9000.
 You can send HTTP request to the server.
 
-### POST [path]
+### PUT [path]
 You can deploy your script to specified path.
 
 Example:
 ```bash
-$ curl -X POST -H "Content-Type: application/octet-stream" --data-binary @src/init.py "http://192.168.1.102:9000/init.py"
+$ curl -X PUT -H "Content-Type: application/octet-stream" --data-binary @src/init.py "http://192.168.1.102:9000/init.py"
 ```
 
 ### DELETE [path]
