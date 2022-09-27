@@ -11,6 +11,8 @@ These need to be installed on your PC:
 - ampy
   - `pip install adafruit-ampy`
 
+This project tested only on ESP32.
+
 ## How to use this?
 ### Setup the board
 #### Install MicroPython
