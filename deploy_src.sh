@@ -8,12 +8,11 @@ if [ -z ${1} ]; then
 fi
 
 cd src
-tar -cvf deploy.tar $(ls)
+tar -cvf ../deploy.tar $(ls)
 
-curl -X POST -H "Content-Type: application/octet-stream" --data-binary @deploy.tar "http://${1}:9000/tar"
+curl -X POST -H "Content-Type: application/octet-stream" --data-binary @../deploy.tar "http://${1}:9000/tar"
 echo ""
 
-rm deploy.tar
-
 cd ..
+rm -f deploy.tar
 ./reset.sh ${1}
