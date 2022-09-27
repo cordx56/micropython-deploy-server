@@ -98,6 +98,10 @@ def untar(prefix: str, data: bytes):
 
 
 def http_handler(data: bytes):
+    # To prevent files from being corrupted by network errors,
+    # write processing should be written in a callback function,
+    # and processing should be done after confirming that
+    # communication has ended successfully.
     def empty_callback():
         pass
     try:
@@ -119,14 +123,20 @@ def http_handler(data: bytes):
         relative_path = path.decode()[1:]
 
         if method == b"PUT":
-            mkdir_filename(relative_path)
-            with open(relative_path, "wb") as f:
-                f.write(remain_data)
-            return b"HTTP/1.1 201 Created", b"Created", empty_callback
+            def write_callback(path, data):
+                def write_file():
+                    mkdir_filename(path)
+                    with open(path, "wb") as f:
+                        f.write(data)
+                return write_file
+            return b"HTTP/1.1 201 Created", b"Created", write_callback(relative_path, remain_data)
         elif method == b"DELETE":
             try:
-                rm_recursive(relative_path)
-                return b"HTTP/1.1 200 OK", b"OK", empty_callback
+                def rm_callback(path):
+                    def rm():
+                        rm_recursive(path)
+                    return rm
+                return b"HTTP/1.1 200 OK", b"OK", rm_callback(relative_path)
             except:
                 return b"HTTP/1.1 404 Not Found", b"Not Found", empty_callback
         elif method == b"POST":
@@ -136,11 +146,15 @@ def http_handler(data: bytes):
                     machine.reset()
                 return b"HTTP/1.1 200 OK", b"OK", reset_callback
             elif path == b"/tar":
-                untar("", remain_data)
-                return b"HTTP/1.1 201 Created", b"Created", empty_callback
+                def untar_callback(data):
+                    def ut():
+                        untar("", data)
+                    return ut
+                return b"HTTP/1.1 201 Created", b"Created", untar_callback(remain_data)
             elif path == b"/cleanup":
-                cleanup()
-                return b"HTTP/1.1 200 OK", b"OK", empty_callback
+                def cleanup_callback():
+                    cleanup()
+                return b"HTTP/1.1 200 OK", b"OK", cleanup_callback
             else:
                 return b"HTTP/1.1 404 Not Found", b"Not Found", empty_callback
         else:
