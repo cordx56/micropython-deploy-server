@@ -83,3 +83,11 @@ Example:
 ```bash
 $ curl -X POST -H "Content-Type: application/octet-stream" --data-binary @deploy.tar "http://192.168.1.102:9000/tar"
 ```
+
+### POST /cleanup
+Delete all files expect `boot.py`, `main.py`, `secrets.py`.
+
+Example:
+```bash
+$ curl -X POST http://192.168.1.102:9000/cleanup"
+```

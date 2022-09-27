@@ -5,9 +5,14 @@ import _thread
 import machine
 import network
 
-import secrets
-
 USER_INIT_FILE = "init.py"
+
+def load_python_file(path):
+    with open(path, "r") as f:
+        script = f.read()
+    exec(script)
+
+load_python_file("secrets.py")
 
 # functions
 def wifi_connect():
@@ -17,11 +22,11 @@ def wifi_connect():
 
     if not wlan.isconnected():
         try:
-            if secrets.WIFI_IFCONFIG:
-                wlan.ifconfig(secrets.WIFI_IFCONFIG)
+            if WIFI_IFCONFIG:
+                wlan.ifconfig(WIFI_IFCONFIG)
         except:
             pass
-        wlan.connect(secrets.WIFI_SSID, secrets.WIFI_PASSWORD)
+        wlan.connect(WIFI_SSID, WIFI_PASSWORD)
         while not wlan.isconnected():
             pass
         print(wlan.ifconfig())
@@ -29,11 +34,9 @@ def wifi_connect():
 def start_deployed():
     """Start deployed script"""
     try:
-        with open(USER_INIT_FILE, "r") as f:
-            exec(f.read())
+        load_python_file(USER_INIT_FILE)
     except Exception as e:
         print("Start deployed script failed: ", e)
-
 
 def rm_recursive(path):
     try:
@@ -46,6 +49,13 @@ def rm_recursive(path):
         for d in os.listdir(path):
             rm_recursive(path + "/" + d)
         os.rmdir(path)
+
+def cleanup(excepts=[]):
+    excepts.extend(["boot.py", "main.py", "secrets.py"])
+    for path in os.listdir():
+        if path not in excepts:
+            rm_recursive(path)
+
 def mkdir_filename(filename: str):
     if "/" not in filename:
         return
@@ -128,6 +138,9 @@ def http_handler(data: bytes):
             elif path == b"/tar":
                 untar("", remain_data)
                 return b"HTTP/1.1 201 Created", b"Created", empty_callback
+            elif path == b"/cleanup":
+                cleanup()
+                return b"HTTP/1.1 200 OK", b"OK", empty_callback
             else:
                 return b"HTTP/1.1 404 Not Found", b"Not Found", empty_callback
         else:
