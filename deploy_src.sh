@@ -7,14 +7,14 @@ if [ -z ${1} ]; then
   exit 1
 fi
 
-echo "Cleanup..."
+echo -n "Cleanup..."
 curl -X POST "http://${1}:9000/cleanup"
 echo ""
 
 cd src
 tar -cvf ../deploy.tar $(ls)
 
-echo "Send"
+echo -n "Send..."
 curl -X POST -H "Content-Type: application/octet-stream" --data-binary @../deploy.tar "http://${1}:9000/tar"
 echo ""
 
