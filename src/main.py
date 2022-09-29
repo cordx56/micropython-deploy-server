@@ -125,27 +125,39 @@ def untar(prefix: str, data: bytes):
             break
 
 
-def http_handler(clf):
+def http_handler(cl: socket.socket):
     # To prevent files from being corrupted by network errors,
     # write processing should be written in a callback function,
     # and processing should be done after confirming that
     # communication has ended successfully.
     def empty_callback():
         pass
+    DEFAULT_RECV_SIZE = 1024
+    def recv_line(s: socket.socket, remain_data: bytes) -> tuple[bytes, bytes, bool]:
+        data = remain_data
+        received = False
+        while not received:
+            index_of_crlf = data.find(b"\r\n")
+            if index_of_crlf < 0:
+                recv = s.recv(DEFAULT_RECV_SIZE)
+                data += recv
+                if len(recv) < DEFAULT_RECV_SIZE:
+                    received = True
+            else:
+                return data[:index_of_crlf], data[index_of_crlf + 2:], received
+        return data, b"", received
     try:
-        first_line = clf.readline()
-        if 1 < len(first_line):
-            first_line = first_line[:-2]
+        first_line, remain_data, received = recv_line(cl, b"")
         first_line_splitted = first_line.split(b" ")
         method = first_line_splitted[0].decode()
         path_and_query = first_line_splitted[1].decode()
         path = path_and_query.split("?")[0]
         while True:
-            line = clf.readline()
-            if line == b"\r\n":
+            if received:
                 break
-            elif len(line) == 0:
-                return b"HTTP/1.1 400 Bad Request", b"Bad Request", empty_callback
+            line, remain_data, received = recv_line(cl, remain_data)
+            if len(line) == 0:
+                break
 
         if method == "PUT":
             def move_callback(before_path: str, after_path: str):
@@ -155,15 +167,19 @@ def http_handler(clf):
                     rm_recursive("/tmp")
                 return rename
             tmp_path = "/tmp" + path
+
             mkdir_filename(tmp_path)
             with open(tmp_path, "wb") as f:
+                f.write(remain_data)
                 while True:
-                    new_data = clf.recv(1024)
+                    if received:
+                        break
+                    new_data = cl.recv(DEFAULT_RECV_SIZE)
                     if new_data:
                         f.write(new_data)
                     else:
                         break
-                    if len(new_data) < 1024:
+                    if len(new_data) < DEFAULT_RECV_SIZE:
                         break
             return b"HTTP/1.1 201 Created", b"Created", move_callback(tmp_path, path)
         elif method == "DELETE":
@@ -186,7 +202,7 @@ def http_handler(clf):
                     def ut():
                         untar("", data)
                     return ut
-                return b"HTTP/1.1 201 Created", b"Created", untar_callback(clf.recv())
+                return b"HTTP/1.1 201 Created", b"Created", untar_callback(cl.recv(DEFAULT_RECV_SIZE))
             elif path == "/cleanup":
                 def cleanup_callback():
                     cleanup()
@@ -196,7 +212,6 @@ def http_handler(clf):
         else:
             return b"HTTP/1.1 400 Bad Request", b"Bad Request", empty_callback
     except Exception as e:
-        print(e)
         sys.print_exception(e)
         return b"HTTP/1.1 500 Internal Server Error", b"Internal Server Error", empty_callback
 
@@ -209,14 +224,14 @@ def start_server():
 
     while True:
         cl, claddr = s.accept()
-        print("Connect: ", claddr)
+        print("Connect:", claddr)
 
-        cl_file = cl.makefile("rb")
-        response, body, callback = http_handler(cl_file)
+        response, body, callback = http_handler(cl)
         cl.send(response)
         cl.send(b"\r\n\r\n")
         cl.send(body)
         cl.close()
+        print("Closed:", claddr)
         callback()
 
 def server_loop():
@@ -224,7 +239,6 @@ def server_loop():
         try:
             start_server()
         except Exception as e:
-            print(e)
             sys.print_exception(e)
         time.sleep(1)
 
