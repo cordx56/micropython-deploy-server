@@ -11,13 +11,12 @@ echo -n "Cleanup..."
 curl -X POST "http://${1}:9000/cleanup"
 echo ""
 
-cd src
-tar -cvf ../deploy.tar $(ls)
+BASE_DIR_ABSOLUTE_PATH=$(pwd)/src/
+FILE_LIST=$(find $BASE_DIR_ABSOLUTE_PATH -type f | sed -E "s/^.{${#BASE_DIR_ABSOLUTE_PATH}}(.*)/\1/")
+for v in $FILE_LIST
+do
+  echo -n "Send ${v}..."
+  ./deploy_file.sh ${1} src/${v} ${v}
+done
 
-echo -n "Send..."
-curl -X POST -H "Content-Type: application/octet-stream" --data-binary @../deploy.tar "http://${1}:9000/tar"
-echo ""
-
-cd ..
-rm -f deploy.tar
 ./reset.sh ${1}
