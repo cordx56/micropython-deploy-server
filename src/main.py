@@ -133,30 +133,29 @@ def http_handler(cl: socket.socket):
     def empty_callback():
         pass
     DEFAULT_RECV_SIZE = 1024
-    def recv_line(s: socket.socket, remain_data: bytes) -> tuple[bytes, bytes, bool]:
+    def read_line(s: socket.socket, remain_data: bytes, received=False) -> tuple[bytes, bytes, bool]:
         data = remain_data
-        received = False
-        while not received:
+        while True:
             index_of_crlf = data.find(b"\r\n")
             if index_of_crlf < 0:
+                if received:
+                    return data, b"", received
                 recv = s.recv(DEFAULT_RECV_SIZE)
                 data += recv
                 if len(recv) < DEFAULT_RECV_SIZE:
                     received = True
             else:
                 return data[:index_of_crlf], data[index_of_crlf + 2:], received
-        return data, b"", received
     try:
-        first_line, remain_data, received = recv_line(cl, b"")
+        first_line, remain_data, received = read_line(cl, b"")
         first_line_splitted = first_line.split(b" ")
         method = first_line_splitted[0].decode()
         path_and_query = first_line_splitted[1].decode()
         path = path_and_query.split("?")[0]
+        line = b""
         while True:
-            if received:
-                break
-            line, remain_data, received = recv_line(cl, remain_data)
-            if len(line) == 0:
+            line, remain_data, received = read_line(cl, remain_data, received)
+            if len(line) == 0 or received and len(remain_data) == 0:
                 break
 
         if method == "PUT":
@@ -170,6 +169,8 @@ def http_handler(cl: socket.socket):
 
             mkdir_filename(tmp_path)
             with open(tmp_path, "wb") as f:
+                if 0 < len(line):
+                    f.write(line)
                 f.write(remain_data)
                 while True:
                     if received:
