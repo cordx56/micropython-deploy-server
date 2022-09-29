@@ -23,6 +23,8 @@ SOFTWARE.
 """
 
 import os
+import sys
+import io
 import time
 import socket
 import _thread
@@ -61,21 +63,23 @@ def start_deployed():
         load_python_file(USER_INIT_FILE)
     except Exception as e:
         print("Start deployed script failed: ", e)
+        sys.print_exception(e)
 
 def rm_recursive(path: str):
+    ENOTEMPTY = 39
     try:
         os.rmdir(path)
-    except NotADirectoryError:
-        os.remove(path)
-    except FileNotFoundError:
-        pass
-    except:
-        for d in os.listdir(path):
-            rm_recursive(path + "/" + d)
-        os.rmdir(path)
+    except OSError as e:
+        if e.errno == ENOTEMPTY:
+            for d in os.listdir(path):
+                rm_recursive(path + "/" + d)
+            os.rmdir(path)
+        else:
+            sys.print_exception(e)
 
 def cleanup(excepts=[]):
     excepts.extend(["boot.py", "main.py", "secrets.py"])
+    os.chdir("/")
     for path in os.listdir():
         if path not in excepts:
             rm_recursive(path)
@@ -121,7 +125,7 @@ def untar(prefix: str, data: bytes):
             break
 
 
-def http_handler(data: bytes):
+def http_handler(clf):
     # To prevent files from being corrupted by network errors,
     # write processing should be written in a callback function,
     # and processing should be done after confirming that
@@ -129,53 +133,61 @@ def http_handler(data: bytes):
     def empty_callback():
         pass
     try:
-        next_index = data.index(b"\r\n")
-        first_line = data[:next_index]
+        first_line = clf.readline()
+        if 1 < len(first_line):
+            first_line = first_line[:-2]
         first_line_splitted = first_line.split(b" ")
-        method = first_line_splitted[0]
-        path_and_query = first_line_splitted[1]
-        path = path_and_query.split(b"?")[0]
-        remain_data = data[next_index + 2:]
+        method = first_line_splitted[0].decode()
+        path_and_query = first_line_splitted[1].decode()
+        path = path_and_query.split("?")[0]
         while True:
-            next_index = remain_data.index(b"\r\n")
-            line = remain_data[:next_index]
-            remain_data = remain_data[next_index + 2:]
-            if len(line) == 0:
+            line = clf.readline()
+            if line == b"\r\n":
                 break
-            elif len(remain_data) == 0:
-                break
-        relative_path = path.decode()[1:]
+            elif len(line) == 0:
+                return b"HTTP/1.1 400 Bad Request", b"Bad Request", empty_callback
 
-        if method == b"PUT":
-            def write_callback(path, data):
-                def write_file():
-                    mkdir_filename(path)
-                    with open(path, "wb") as f:
-                        f.write(data)
-                return write_file
-            return b"HTTP/1.1 201 Created", b"Created", write_callback(relative_path, remain_data)
-        elif method == b"DELETE":
+        if method == "PUT":
+            def move_callback(before_path: str, after_path: str):
+                def rename():
+                    mkdir_filename(after_path)
+                    os.rename(before_path, after_path)
+                    rm_recursive("/tmp")
+                return rename
+            tmp_path = "/tmp" + path
+            mkdir_filename(tmp_path)
+            with open(tmp_path, "wb") as f:
+                while True:
+                    new_data = clf.recv(1024)
+                    if new_data:
+                        f.write(new_data)
+                    else:
+                        break
+                    if len(new_data) < 1024:
+                        break
+            return b"HTTP/1.1 201 Created", b"Created", move_callback(tmp_path, path)
+        elif method == "DELETE":
             try:
                 def rm_callback(path):
                     def rm():
                         rm_recursive(path)
                     return rm
-                return b"HTTP/1.1 200 OK", b"OK", rm_callback(relative_path)
+                return b"HTTP/1.1 200 OK", b"OK", rm_callback(path)
             except:
                 return b"HTTP/1.1 404 Not Found", b"Not Found", empty_callback
-        elif method == b"POST":
-            if path == b"/reset":
+        elif method == "POST":
+            if path == "/reset":
                 def reset_callback():
                     time.sleep(1)
                     machine.reset()
                 return b"HTTP/1.1 200 OK", b"OK", reset_callback
-            elif path == b"/tar":
+            elif path == "/tar":
                 def untar_callback(data):
                     def ut():
                         untar("", data)
                     return ut
-                return b"HTTP/1.1 201 Created", b"Created", untar_callback(remain_data)
-            elif path == b"/cleanup":
+                return b"HTTP/1.1 201 Created", b"Created", untar_callback(clf.recv())
+            elif path == "/cleanup":
                 def cleanup_callback():
                     cleanup()
                 return b"HTTP/1.1 200 OK", b"OK", cleanup_callback
@@ -185,6 +197,7 @@ def http_handler(data: bytes):
             return b"HTTP/1.1 400 Bad Request", b"Bad Request", empty_callback
     except Exception as e:
         print(e)
+        sys.print_exception(e)
         return b"HTTP/1.1 500 Internal Server Error", b"Internal Server Error", empty_callback
 
 
@@ -198,16 +211,8 @@ def start_server():
         cl, claddr = s.accept()
         print("Connect: ", claddr)
 
-        data = b""
-        while True:
-            try:
-                recv = cl.recv(1024)
-                data += recv
-                if not recv or len(recv) < 1024:
-                    break
-            except ConnectionResetError:
-                break
-        response, body, callback = http_handler(data)
+        cl_file = cl.makefile("rb")
+        response, body, callback = http_handler(cl_file)
         cl.send(response)
         cl.send(b"\r\n\r\n")
         cl.send(body)
@@ -220,6 +225,8 @@ def server_loop():
             start_server()
         except Exception as e:
             print(e)
+            sys.print_exception(e)
+        time.sleep(1)
 
 
 # main
