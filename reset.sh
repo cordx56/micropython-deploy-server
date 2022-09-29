@@ -7,6 +7,5 @@ if [ -z ${1} ]; then
   exit 1
 fi
 
-echo -n "Reset..."
 curl -X POST "http://${1}:9000/reset"
 echo ""
