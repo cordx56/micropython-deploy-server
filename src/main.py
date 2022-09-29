@@ -47,13 +47,13 @@ def wifi_connect():
     wlan.active(True)
 
     if not wlan.isconnected():
+        wlan.connect(WIFI_SSID, WIFI_PASSWORD)
+        while not wlan.isconnected():
+            pass
         try:
             if WIFI_IFCONFIG:
                 wlan.ifconfig(WIFI_IFCONFIG)
         except:
-            pass
-        wlan.connect(WIFI_SSID, WIFI_PASSWORD)
-        while not wlan.isconnected():
             pass
         print(wlan.ifconfig())
 
