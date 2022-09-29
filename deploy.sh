@@ -15,8 +15,9 @@ if [ -z ${1} ]; then
   exit 1
 fi
 
+SCRIPT_DIR=$(cd $(dirname $0); pwd)
 if [ -z ${2} ]; then
-  BASE_DIR_ABS_PATH=$(cd $(dirname $0); pwd)/src
+  BASE_DIR_ABS_PATH=$SCRIPT_DIR/src
 else
   BASE_DIR_ABS_PATH=$(cd ${2}; pwd)
 fi
@@ -32,7 +33,7 @@ for v in $FILE_LIST
 do
   echo -n "Send ${v}..."
   if [ -z $DRY_RUN ]; then
-    ./deploy_file.sh ${1} src/${v} ${v}
+    $SCRIPT_DIR/deploy_file.sh ${1} $BASE_DIR_ABS_PATH/${v} ${v}
   else
     echo ""
   fi
@@ -40,7 +41,7 @@ done
 
 echo -n "Reset..."
 if [ -z $DRY_RUN ]; then
-  ./reset.sh ${1}
+  $SCRIPT_DIR/reset.sh ${1}
 else
   echo ""
 fi
