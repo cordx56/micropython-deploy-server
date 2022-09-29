@@ -41,11 +41,36 @@ If you use macOS, `serial` will look like `/dev/tty.usbserial-0001`.
 Then, Power on your board!
 
 ### How to deploy the program?
-Use `deploy_src.sh`.
+Use `deploy.sh`.
 This script will automatically transfer files under src directory via network and reset your board.
 
 When your board is reset, `main.py` opens `init.py` and run the contents.
 This means that the entry point for your program must be written in `src/init.py`.
+
+### How to use with my repository?
+You can add this repository as your repository's submodule.
+```bash
+$ git submodule add https://github.com/cordx56/micropython-deploy-server deploy
+```
+
+Then, create your source files directory.
+```bash
+$ mkdir src
+```
+
+Create required files.
+```bash
+$ echo 'WIFI_SSID = "ssid"\nWIFI_PASSWORD = "password" > src/secrets.py'
+$ echo 'print("Hello, world!")' > src/init.py
+```
+
+Run `deploy.sh`
+```bash
+$ ./deploy/deploy.sh 192.168.1.102 ./src
+```
+
+That's all!
+Your script is deployed.
 
 ## How to use API?
 The API is simple.
@@ -76,7 +101,7 @@ Example:
 $ curl -X POST http://192.168.1.102:9000/reset"
 ```
 
-### POST /tar
+### POST /tar [DEPRECATED]
 Deploy tar file.
 
 Example:
