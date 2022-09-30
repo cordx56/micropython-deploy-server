@@ -125,115 +125,263 @@ def untar(prefix: str, data: bytes):
             break
 
 
-def http_handler(cl: socket.socket):
-    # To prevent files from being corrupted by network errors,
-    # write processing should be written in a callback function,
-    # and processing should be done after confirming that
-    # communication has ended successfully.
-    def empty_callback():
-        pass
+
+# myhttp
+class SendHeaderAfterBodyError(Exception):
+    pass
+class HeaderFormatError(Exception):
+    pass
+class HeaderFinishedError(Exception):
+    pass
+class HTTPFormatError(Exception):
+    pass
+
+class SocketReader:
+    client: socket.socket
+    buffer: bytes = b""
+    received: bool = False
     DEFAULT_RECV_SIZE = 1024
-    def read_line(s: socket.socket, remain_data: bytes, received=False) -> tuple[bytes, bytes, bool]:
-        data = remain_data
+    def __init__(self, client: socket.socket):
+        self.client = client
+    def recv(self, size=DEFAULT_RECV_SIZE):
+        if self.received:
+            return b""
+        recv = self.client.recv(size)
+        self.buffer += recv
+        if len(recv) < size:
+            self.received = True
+        return recv
+    def read_line(self, line_end=b"\n") -> bytes:
         while True:
-            index_of_crlf = data.find(b"\r\n")
+            index_of_crlf = self.buffer.find(line_end)
             if index_of_crlf < 0:
-                if received:
-                    return data, b"", received
-                recv = s.recv(DEFAULT_RECV_SIZE)
-                data += recv
-                if len(recv) < DEFAULT_RECV_SIZE:
-                    received = True
+                if self.received:
+                    ret = self.buffer
+                    self.buffer = b""
+                    return ret
+                self.recv()
             else:
-                return data[:index_of_crlf], data[index_of_crlf + 2:], received
-    try:
-        first_line, remain_data, received = read_line(cl, b"")
-        first_line_splitted = first_line.split(b" ")
-        method = first_line_splitted[0].decode()
-        path_and_query = first_line_splitted[1].decode()
-        path = path_and_query.split("?")[0]
-        line = b""
-        while True:
-            line, remain_data, received = read_line(cl, remain_data, received)
-            if len(line) == 0 or received and len(remain_data) == 0:
-                break
-
-        if method == "PUT":
-            def move_callback(before_path: str, after_path: str):
-                def rename():
-                    mkdir_filename(after_path)
-                    os.rename(before_path, after_path)
-                    rm_recursive("/tmp")
-                return rename
-            tmp_path = "/tmp" + path
-
-            mkdir_filename(tmp_path)
-            with open(tmp_path, "wb") as f:
-                if 0 < len(line):
-                    f.write(line)
-                f.write(remain_data)
-                while True:
-                    if received:
-                        break
-                    new_data = cl.recv(DEFAULT_RECV_SIZE)
-                    if new_data:
-                        f.write(new_data)
-                    else:
-                        break
-                    if len(new_data) < DEFAULT_RECV_SIZE:
-                        break
-            return b"HTTP/1.1 201 Created", b"Created", move_callback(tmp_path, path)
-        elif method == "DELETE":
-            try:
-                def rm_callback(path):
-                    def rm():
-                        rm_recursive(path)
-                    return rm
-                return b"HTTP/1.1 200 OK", b"OK", rm_callback(path)
-            except:
-                return b"HTTP/1.1 404 Not Found", b"Not Found", empty_callback
-        elif method == "POST":
-            if path == "/reset":
-                def reset_callback():
-                    time.sleep(1)
-                    machine.reset()
-                return b"HTTP/1.1 200 OK", b"OK", reset_callback
-            elif path == "/tar":
-                def untar_callback(data):
-                    def ut():
-                        untar("", data)
-                    return ut
-                return b"HTTP/1.1 201 Created", b"Created", untar_callback(cl.recv(DEFAULT_RECV_SIZE))
-            elif path == "/cleanup":
-                def cleanup_callback():
-                    cleanup()
-                return b"HTTP/1.1 200 OK", b"OK", cleanup_callback
-            else:
-                return b"HTTP/1.1 404 Not Found", b"Not Found", empty_callback
+                line = self.buffer[:index_of_crlf + len(line_end)]
+                self.buffer = self.buffer[index_of_crlf + len(line_end):]
+                return line
+    def read_line_without_line_end(self, line_end=b"\n") -> bytes:
+        line = self.read_line(line_end)
+        if len(line_end) <= len(line) and line[-len(line_end):] == line_end:
+            return line[:-(len(line_end))]
+        return line
+    def read(self, size=-1):
+        if size < 0:
+            while not self.received:
+                self.recv()
+            ret = self.buffer
+            self.buffer = b""
+            return ret
         else:
-            return b"HTTP/1.1 400 Bad Request", b"Bad Request", empty_callback
-    except Exception as e:
-        sys.print_exception(e)
-        return b"HTTP/1.1 500 Internal Server Error", b"Internal Server Error", empty_callback
+            while len(self.buffer) < size:
+                if not self.recv():
+                    break
+            ret = self.buffer[:size]
+            if len(ret) < size:
+                self.buffer = b""
+            else:
+                self.buffer = self.buffer[size:]
+            return ret
 
+class HTTPRequest:
+    method: str
+    path: str
+    query: str
+    proto: str
+    reader: SocketReader
+    header_finished: bool = False
+    def __init__(self, method: str, path: str, query: str, proto: str, reader: SocketReader):
+        self.method = method
+        self.path = path
+        self.query = query
+        self.proto = proto
+        self.reader = reader
+    def read_header(self) -> tuple[str, str] | None:
+        if self.header_finished:
+            raise HeaderFinishedError
+        header_line = self.reader.read_line_without_line_end(b"\r\n")
+        if len(header_line) == 0:
+            self.header_finished = True
+            return None
+        index_of_colon = header_line.find(b":")
+        if index_of_colon < 0:
+            raise HeaderFormatError
+        header_name = header_line[:index_of_colon]
+        value = header_line[:index_of_colon].strip()
+        return header_name.decode(), value.decode()
+    def read_body(self, size=-1) -> bytes:
+        return self.reader.read(size)
+
+HTTP_STATUS = {
+    200: "OK",
+    201: "Created",
+    301: "Moved Permanently",
+    302: "Found",
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    500: "Internal Server Error",
+}
+class HTTPResponse:
+    header_finish = False
+    client: socket.socket
+    def __init__(self, client: socket.socket):
+        self.client = client
+
+    def send_status(self, status: int):
+        self.client.send(f"HTTP/1.1 {status} {HTTP_STATUS[status]}\r\n".encode())
+    def send_header(self, name: str, value: str):
+        if self.header_finish:
+            raise SendHeaderAfterBodyError
+        self.client.send(name.encode() + b": " + value.encode() + b"\r\n")
+    def send_body(self, body: bytes):
+        if not self.header_finish:
+            self.header_finish = True
+            self.client.send(b"\r\n")
+        self.client.send(body)
+
+class HTTPServer:
+    s: socket.socket
+    debug: bool
+    handlers = {}
+    def __init__(self, port: int, debug=False) -> None:
+        self.debug = debug
+        self.s = socket.socket()
+        self.s.bind(("0.0.0.0", port))
+    def listen(self):
+        self.s.listen()
+        while True:
+            cl, claddr = self.s.accept()
+            callback = None
+            try:
+                if self.debug:
+                    print("Connect from:", claddr)
+                http_request = self.get_request(cl)
+                http_response = HTTPResponse(cl)
+
+                try:
+                    callback = self.handlers[http_request.method][http_request.path](http_request, http_response)
+                except KeyError:
+                    wildcard_handler = None
+                    method_handlers = self.handlers.get(http_request.method)
+                    if method_handlers:
+                        wildcard_handler = method_handlers.get("")
+
+                    if wildcard_handler:
+                        callback = wildcard_handler(http_request, http_response)
+                    elif self.not_found_handler:
+                        self.not_found_handler(http_request, http_response)
+                    else:
+                        pass
+            finally:
+                cl.close()
+            if callback:
+                callback()
+
+
+    def on(self, method: str, path: str, handler) -> None:
+        self.handlers.setdefault(method, {})
+        self.handlers[method][path] = handler
+    def on_not_found(self, handler) -> None:
+        self.not_found_handler = handler
+
+    def get_request(self, cl: socket.socket) -> HTTPRequest:
+        # parse first line
+        sr = SocketReader(cl)
+        try:
+            line = sr.read_line_without_line_end(b"\r\n")
+            line = line.decode()
+            if self.debug:
+                print(line)
+            line_splitted = line.split(" ")
+            method = line_splitted[0]
+            path_query = line_splitted[1]
+            proto = line_splitted[2]
+            pq_splitted = path_query.split("?")
+            path = pq_splitted[0]
+            if 1 < len(pq_splitted):
+                query = pq_splitted[1]
+            else:
+                query = ""
+        except:
+            raise HTTPFormatError
+        return HTTPRequest(method, path, query, proto, sr)
+# myhttp end
+
+def handle_not_found(req: HTTPRequest, res: HTTPResponse):
+    res.send_status(404)
+    res.send_header("Content-Type", "text/plain")
+    res.send_body(b"Not Found")
+
+def handle_put_file(req: HTTPRequest, res: HTTPResponse):
+    def move_callback(before_path: str, after_path: str):
+        def rename():
+            mkdir_filename(after_path)
+            os.rename(before_path, after_path)
+            rm_recursive("/tmp")
+        return rename
+    tmp_path = "/tmp" + req.path
+    try:
+        while req.read_header():
+            pass
+        mkdir_filename(tmp_path)
+        with open(tmp_path, "wb") as f:
+            while True:
+                recv = req.read_body(SocketReader.DEFAULT_RECV_SIZE)
+                if not recv:
+                    break
+                f.write(recv)
+        res.send_status(201)
+        res.send_header("Content-Type", "text/plain")
+        res.send_body(b"Created")
+        return move_callback(tmp_path, req.path)
+    except:
+        res.send_status(500)
+        res.send_header("Content-Type", "text/plain")
+        res.send_body(b"Internal Server Error")
+def handle_delete_file(req: HTTPRequest, res: HTTPResponse):
+    try:
+        rm_recursive(req.path)
+        res.send_status(200)
+        res.send_header("Content-Type", "text/plain")
+        res.send_body(b"OK")
+    except:
+        res.send_status(500)
+        res.send_header("Content-Type", "text/plain")
+        res.send_body(b"Internal Server Error")
+def handle_reset(req: HTTPRequest, res: HTTPResponse):
+    def reset_callback():
+        time.sleep(1)
+        machine.reset()
+    res.send_status(200)
+    res.send_header("Content-Type", "text/plain")
+    res.send_body(b"OK")
+    return reset_callback
+def handle_cleanup(req: HTTPRequest, res: HTTPResponse):
+    try:
+        cleanup()
+        res.send_status(200)
+        res.send_header("Content-Type", "text/plain")
+        res.send_body(b"OK")
+    except:
+        res.send_status(500)
+        res.send_header("Content-Type", "text/plain")
+        res.send_body(b"Internal Server Error")
+
+s = HTTPServer(9000)
+s.on_not_found(handle_not_found)
+s.on("PUT", "", handle_put_file)
+s.on("DELETE", "", handle_delete_file)
+s.on("POST", "/reset", handle_reset)
+s.on("POST", "/cleanup", handle_cleanup)
 
 def start_server():
-    """Start TCP server"""
-    s = socket.socket()
-    s.bind(("0.0.0.0", 9000))
     s.listen()
-
-    while True:
-        cl, claddr = s.accept()
-        print("Connect:", claddr)
-
-        response, body, callback = http_handler(cl)
-        cl.send(response)
-        cl.send(b"\r\n\r\n")
-        cl.send(body)
-        cl.close()
-        print("Closed:", claddr)
-        callback()
 
 def server_loop():
     while True:
