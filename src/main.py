@@ -27,6 +27,7 @@ import sys
 import io
 import time
 import socket
+import binascii
 import _thread
 import machine
 import network
@@ -127,7 +128,7 @@ def untar(prefix: str, data: bytes):
 
 
 # myhttp
-class SendHeaderAfterBodyError(Exception):
+class HTTPSendOrderError(Exception):
     pass
 class HeaderFormatError(Exception):
     pass
@@ -194,15 +195,27 @@ class HTTPRequest:
     proto: str
     reader: SocketReader
     header_finished: bool = False
-    def __init__(self, method: str, path: str, query: str, proto: str, reader: SocketReader):
-        self.method = method
-        self.path = path
-        self.query = query
-        self.proto = proto
-        self.reader = reader
+    def __init__(self, cl: socket.socket):
+        # parse first line
+        self.reader = SocketReader(cl)
+        try:
+            line = self.reader.read_line_without_line_end(b"\r\n")
+            line = line.decode()
+            line_splitted = line.split(" ")
+            self.method = line_splitted[0]
+            path_query = line_splitted[1]
+            self.proto = line_splitted[2]
+            pq_splitted = path_query.split("?")
+            self.path = pq_splitted[0]
+            if 1 < len(pq_splitted):
+                self.query = pq_splitted[1]
+            else:
+                self.query = ""
+        except:
+            raise HTTPFormatError
     def read_header(self) -> tuple[str, str] | None:
         if self.header_finished:
-            raise HeaderFinishedError
+            return None
         header_line = self.reader.read_line_without_line_end(b"\r\n")
         if len(header_line) == 0:
             self.header_finished = True
@@ -211,10 +224,15 @@ class HTTPRequest:
         if index_of_colon < 0:
             raise HeaderFormatError
         header_name = header_line[:index_of_colon]
-        value = header_line[:index_of_colon].strip()
+        value = header_line[index_of_colon + 1:].strip()
         return header_name.decode(), value.decode()
     def read_body(self, size=-1) -> bytes:
         return self.reader.read(size)
+    def read_all(self) -> None:
+        while self.read_header():
+            pass
+        while self.read_body():
+            pass
 
 HTTP_STATUS = {
     200: "OK",
@@ -228,16 +246,20 @@ HTTP_STATUS = {
     500: "Internal Server Error",
 }
 class HTTPResponse:
-    header_finish = False
+    status_finish: bool = False
+    header_finish: bool = False
     client: socket.socket
     def __init__(self, client: socket.socket):
         self.client = client
 
     def send_status(self, status: int):
+        if self.status_finish:
+            raise HTTPSendOrderError
         self.client.send(f"HTTP/1.1 {status} {HTTP_STATUS[status]}\r\n".encode())
+        self.status_finish = True
     def send_header(self, name: str, value: str):
-        if self.header_finish:
-            raise SendHeaderAfterBodyError
+        if self.header_finish or not self.status_finish:
+            raise HTTPSendOrderError
         self.client.send(name.encode() + b": " + value.encode() + b"\r\n")
     def send_body(self, body: bytes):
         if not self.header_finish:
@@ -261,7 +283,7 @@ class HTTPServer:
             try:
                 if self.debug:
                     print("Connect from:", claddr)
-                http_request = self.get_request(cl)
+                http_request = HTTPRequest(cl)
                 http_response = HTTPResponse(cl)
 
                 try:
@@ -289,29 +311,37 @@ class HTTPServer:
         self.handlers[method][path] = handler
     def on_not_found(self, handler) -> None:
         self.not_found_handler = handler
-
-    def get_request(self, cl: socket.socket) -> HTTPRequest:
-        # parse first line
-        sr = SocketReader(cl)
-        try:
-            line = sr.read_line_without_line_end(b"\r\n")
-            line = line.decode()
-            if self.debug:
-                print(line)
-            line_splitted = line.split(" ")
-            method = line_splitted[0]
-            path_query = line_splitted[1]
-            proto = line_splitted[2]
-            pq_splitted = path_query.split("?")
-            path = pq_splitted[0]
-            if 1 < len(pq_splitted):
-                query = pq_splitted[1]
-            else:
-                query = ""
-        except:
-            raise HTTPFormatError
-        return HTTPRequest(method, path, query, proto, sr)
 # myhttp end
+
+def check_basic_auth_header(req: HTTPRequest) -> bool:
+    while True:
+        header = req.read_header()
+        if not header:
+            return False
+        if header[0].lower() == "authorization":
+            header_splitted = header[1].split(" ")
+            if len(header_splitted) < 2:
+                return False
+            if header_splitted[0].lower() != "basic":
+                return False
+            credential = header_splitted[1]
+            username_and_password = USERNAME + ":" + PASSWORD
+            if binascii.a2b_base64(credential) == username_and_password.encode():
+                return True
+
+def send_basic_auth_header(res: HTTPResponse):
+    res.send_header("WWW-Authenticate", "Basic realm=ESP32%20Deploy%20Server")
+
+def check_basic_auth(req: HTTPRequest, res: HTTPResponse):
+    check = check_basic_auth_header(req)
+    if not check:
+        req.read_all()
+        res.send_status(401)
+        res.send_header("Content-Type", "text/plain")
+        send_basic_auth_header(res)
+        res.send_body(b"Authentication required")
+        return False
+    return True
 
 def handle_not_found(req: HTTPRequest, res: HTTPResponse):
     res.send_status(404)
@@ -327,6 +357,8 @@ def handle_put_file(req: HTTPRequest, res: HTTPResponse):
         return rename
     tmp_path = "/tmp" + req.path
     try:
+        if not check_basic_auth(req, res):
+            return
         while req.read_header():
             pass
         mkdir_filename(tmp_path)
@@ -346,6 +378,8 @@ def handle_put_file(req: HTTPRequest, res: HTTPResponse):
         res.send_body(b"Internal Server Error")
 def handle_delete_file(req: HTTPRequest, res: HTTPResponse):
     try:
+        if not check_basic_auth(req, res):
+            return
         rm_recursive(req.path)
         res.send_status(200)
         res.send_header("Content-Type", "text/plain")
@@ -358,12 +392,16 @@ def handle_reset(req: HTTPRequest, res: HTTPResponse):
     def reset_callback():
         time.sleep(1)
         machine.reset()
+    if not check_basic_auth(req, res):
+        return
     res.send_status(200)
     res.send_header("Content-Type", "text/plain")
     res.send_body(b"OK")
     return reset_callback
 def handle_cleanup(req: HTTPRequest, res: HTTPResponse):
     try:
+        if not check_basic_auth(req, res):
+            return
         cleanup()
         res.send_status(200)
         res.send_header("Content-Type", "text/plain")
